@@ -4,6 +4,9 @@ A very basic calculator to find the appropriate drop height to simulate the forc
 
 If loose, the forces could be multiples of what the calculator shows by default.
 
+Why:
+I was curious what kinds of forces a phone really sees, with the intent of better understanding how well secured it really needs to be, if it is going to be depended on as a life-safety device in the event of a collision.  In other words: Will it still be where you left it, or will it have grown wings and flown out the window, after hitting you in the face.
+
 ___
 
 DISCLOSURE:
