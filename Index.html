@@ -1,0 +1,340 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crash Force Drop Height Calculator</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            background-color: #1e1e1e; 
+            color: #ffffff; 
+        }
+        .header {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 20px;
+            border: 2px solid #4CAF50;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .form-container {
+            flex: 1;
+            min-width: 200px;
+        }
+        .chart-container {
+            flex: 1;
+            min-width: 300px;
+            max-width: 600px;
+        }
+        label { 
+            display: inline-block; 
+            width: 180px; 
+            margin-bottom: 10px; 
+        }
+        input { 
+            width: 100px; 
+            margin-bottom: 10px; 
+            background-color: #333; 
+            color: #fff; 
+            border: 1px solid #555; 
+        }
+        input[type="checkbox"] { 
+            width: auto; 
+            vertical-align: middle; 
+        }
+        button { 
+            padding: 10px 20px; 
+            cursor: pointer; 
+            background-color: #444; 
+            color: #fff; 
+            border: 1px solid #666; 
+            margin-right: 10px;
+        }
+        button:hover { 
+            background-color: #555; 
+        }
+        table { 
+            border-collapse: collapse; 
+            margin-top: 20px; 
+            width: 100%;
+        }
+        th, td { 
+            border: 1px solid #555; 
+            padding: 8px; 
+            text-align: right; 
+        }
+        th { 
+            background-color: #333; 
+        }
+        tbody tr:nth-child(odd) { 
+            background-color: #2a2a2a; 
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Crash Force Drop Height Calculator</h1>
+    </div>
+    <div class="container">
+        <div class="form-container">
+            <label>Device Weight (grams):</label>
+            <input type="number" id="weight" value="200" min="0" step="0.1"><br>
+            <label id="speedStartLabel">Start Speed (mph):</label>
+            <input type="number" id="startSpeed" value="5" min="0" step="1"><br>
+            <label id="speedEndLabel">End Speed (mph):</label>
+            <input type="number" id="endSpeed" value="120" min="0" step="1"><br>
+            <label id="speedStepLabel">Speed Step (mph):</label>
+            <input type="number" id="speedStep" value="5" min="1" step="1"><br>
+            <label>Impact Stop Time (s):</label>
+            <input type="number" id="impactStopTime" value="0.01" min="0.001" step="0.001"><br>
+            <label>Worst Case Multiplier:</label>
+            <input type="number" id="worstCaseMultiplier" value="2" min="1" step="0.1">
+            <input type="checkbox" id="worstCase" onchange="calculate()"><br>
+            <label>Use Metric Units:</label>
+            <input type="checkbox" id="metricUnits" checked onchange="updateLabels(); calculate()"><br>
+            <button onclick="calculate()">Calculate</button>
+            <button onclick="exportCSV()">Export CSV</button>
+        </div>
+        <div class="chart-container">
+            <canvas id="dropHeightChart"></canvas>
+        </div>
+    </div>
+    <table id="results">
+        <thead id="tableHeader"></thead>
+        <tbody id="resultsBody"></tbody>
+    </table>
+
+    <script>
+        let chartInstance = null;
+
+        function updateLabels() {
+            const metricUnits = document.getElementById('metricUnits').checked;
+            document.getElementById('speedStartLabel').textContent = `Start Speed (${metricUnits ? 'kph' : 'mph'}):`;
+            document.getElementById('speedEndLabel').textContent = `End Speed (${metricUnits ? 'kph' : 'mph'}):`;
+            document.getElementById('speedStepLabel').textContent = `Speed Step (${metricUnits ? 'kph' : 'mph'}):`;
+        }
+
+        function calculate() {
+            const weight = parseFloat(document.getElementById('weight').value) / 1000;
+            const startSpeed = parseInt(document.getElementById('startSpeed').value);
+            const endSpeed = parseInt(document.getElementById('endSpeed').value);
+            const speedStep = parseInt(document.getElementById('speedStep').value);
+            const impactStopTime = parseFloat(document.getElementById('impactStopTime').value);
+            const worstCase = document.getElementById('worstCase').checked;
+            const worstCaseMultiplier = parseFloat(document.getElementById('worstCaseMultiplier').value);
+            const metricUnits = document.getElementById('metricUnits').checked;
+            const g = 9.81;
+            const crashStopTime = 0.1;
+            const cmToIn = 0.393701;
+            const nToKg = 0.101972;
+            const cmToM = 0.01;
+            const inToFt = 1 / 12;
+            const mphToKph = 1.60934;
+
+            const header = metricUnits
+                ? `<tr>
+                    <th>Speed (kph)</th>
+                    <th>Speed (m/s)</th>
+                    <th>Crash Force (N)</th>
+                    <th>Crash Force (kg)</th>
+                    <th>G-force</th>
+                    <th>Drop Height (cm)</th>
+                    <th>Drop Height (m)</th>
+                </tr>`
+                : `<tr>
+                    <th>Speed (mph)</th>
+                    <th>Speed (m/s)</th>
+                    <th>Crash Force (N)</th>
+                    <th>Crash Force (kg)</th>
+                    <th>G-force</th>
+                    <th>Drop Height (in)</th>
+                    <th>Drop Height (ft/in)</th>
+                </tr>`;
+            document.getElementById('tableHeader').innerHTML = header;
+
+            let results = '';
+            const speeds = [];
+            const dropHeights = [];
+
+            for (let speed = startSpeed; speed <= endSpeed; speed += speedStep) {
+                const speedKph = metricUnits ? speed : speed * mphToKph;
+                const speedMph = metricUnits ? speed / mphToKph : speed;
+                const speedMs = speedMph * 0.44704;
+                let gForce, forceN, forceKg;
+
+                const crashDecel = speedMs / crashStopTime;
+                gForce = worstCase ? (crashDecel / g) * worstCaseMultiplier : crashDecel / g;
+                forceN = weight * gForce * g;
+                forceKg = forceN * nToKg;
+
+                const dropVelocity = gForce * g * impactStopTime;
+                const dropHeightCm = (dropVelocity ** 2) / (2 * g) * 100;
+                const dropHeightM = dropHeightCm * cmToM;
+                const dropHeightIn = dropHeightCm * cmToIn;
+                const dropHeightFt = Math.floor(dropHeightIn * inToFt);
+                const dropHeightInRem = (dropHeightIn % 12).toFixed(2);
+                const dropHeightFtIn = `${dropHeightFt} ft ${dropHeightInRem} in`;
+
+                speeds.push(speed);
+                dropHeights.push(metricUnits ? dropHeightCm : dropHeightIn);
+
+                results += metricUnits
+                    ? `<tr>
+                        <td>${speedKph.toFixed(2)}</td>
+                        <td>${speedMs.toFixed(2)}</td>
+                        <td>${forceN.toFixed(2)}</td>
+                        <td>${forceKg.toFixed(2)}</td>
+                        <td>${gForce.toFixed(2)}</td>
+                        <td>${dropHeightCm.toFixed(2)}</td>
+                        <td>${dropHeightM.toFixed(3)}</td>
+                    </tr>`
+                    : `<tr>
+                        <td>${speedMph.toFixed(2)}</td>
+                        <td>${speedMs.toFixed(2)}</td>
+                        <td>${forceN.toFixed(2)}</td>
+                        <td>${forceKg.toFixed(2)}</td>
+                        <td>${gForce.toFixed(2)}</td>
+                        <td>${dropHeightIn.toFixed(2)}</td>
+                        <td>${dropHeightFtIn}</td>
+                    </tr>`;
+            }
+            document.getElementById('resultsBody').innerHTML = results;
+
+            if (chartInstance) chartInstance.destroy();
+            const ctx = document.getElementById('dropHeightChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: speeds,
+                    datasets: [{
+                        label: worstCase ? `Drop Height (${metricUnits ? 'cm' : 'in'}, ${worstCaseMultiplier}x G)` : `Drop Height (${metricUnits ? 'cm' : 'in'})`,
+                        data: dropHeights,
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.2)',
+                        fill: false,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    scales: {
+                        x: { title: { display: true, text: `Speed (${metricUnits ? 'kph' : 'mph'})`, color: '#fff' } },
+                        y: { title: { display: true, text: `Drop Height (${metricUnits ? 'cm' : 'in'})`, color: '#fff' } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#fff' } }
+                    }
+                }
+            });
+        }
+
+        function exportCSV() {
+            const weight = parseFloat(document.getElementById('weight').value) / 1000;
+            const startSpeed = parseInt(document.getElementById('startSpeed').value);
+            const endSpeed = parseInt(document.getElementById('endSpeed').value);
+            const speedStep = parseInt(document.getElementById('speedStep').value);
+            const impactStopTime = parseFloat(document.getElementById('impactStopTime').value);
+            const worstCase = document.getElementById('worstCase').checked;
+            const worstCaseMultiplier = parseFloat(document.getElementById('worstCaseMultiplier').value);
+            const metricUnits = document.getElementById('metricUnits').checked;
+            const g = 9.81;
+            const crashStopTime = 0.1;
+            const cmToIn = 0.393701;
+            const nToKg = 0.101972;
+            const cmToM = 0.01;
+            const inToFt = 1 / 12;
+            const mphToKph = 1.60934;
+
+            let csv = metricUnits
+                ? 'Speed (kph),Speed (m/s),Crash Force (N),Crash Force (kg),G-force,Drop Height (cm),Drop Height (m)\n'
+                : 'Speed (mph),Speed (m/s),Crash Force (N),Crash Force (kg),G-force,Drop Height (in),Drop Height (ft/in)\n';
+            for (let speed = startSpeed; speed <= endSpeed; speed += speedStep) {
+                const speedKph = metricUnits ? speed : speed * mphToKph;
+                const speedMph = metricUnits ? speed / mphToKph : speed;
+                const speedMs = speedMph * 0.44704;
+                let gForce, forceN, forceKg;
+
+                const crashDecel = speedMs / crashStopTime;
+                gForce = worstCase ? (crashDecel / g) * worstCaseMultiplier : crashDecel / g;
+                forceN = weight * gForce * g;
+                forceKg = forceN * nToKg;
+
+                const dropVelocity = gForce * g * impactStopTime;
+                const dropHeightCm = (dropVelocity ** 2) / (2 * g) * 100;
+                const dropHeightM = dropHeightCm * cmToM;
+                const dropHeightIn = dropHeightCm * cmToIn;
+                const dropHeightFt = Math.floor(dropHeightIn * inToFt);
+                const dropHeightInRem = (dropHeightIn % 12).toFixed(2);
+                const dropHeightFtIn = `${dropHeightFt} ft ${dropHeightInRem} in`;
+
+                csv += metricUnits
+                    ? `${speedKph.toFixed(2)},${speedMs.toFixed(2)},${forceN.toFixed(2)},${forceKg.toFixed(2)},${gForce.toFixed(2)},${dropHeightCm.toFixed(2)},${dropHeightM.toFixed(3)}\n`
+                    : `${speedMph.toFixed(2)},${speedMs.toFixed(2)},${forceN.toFixed(2)},${forceKg.toFixed(2)},${gForce.toFixed(2)},${dropHeightIn.toFixed(2)},${dropHeightFtIn}\n`;
+            }
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'crash_force_data.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize labels and run calculation on page load
+        updateLabels();
+        calculate();
+    </script>
+</body>
+</html>
